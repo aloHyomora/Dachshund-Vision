@@ -46,8 +46,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="yolov8n.pt", help="Ultralytics YOLOv8 모델 가중치")
     parser.add_argument("--index", type=int, default=0, help="카메라 인덱스")
-    parser.add_argument("--width", type=int, default=1280)
-    parser.add_argument("--height", type=int, default=720)
+    # 0=자동 최대 해상도 (camera_input에서 v4l2-ctl 탐색 + MJPG 적용)
+    parser.add_argument("--width", type=int, default=0, help="0 for auto max")
+    parser.add_argument("--height", type=int, default=0, help="0 for auto max")
     parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument("--iou", type=float, default=0.45)
     parser.add_argument("--no-show", dest="no_show", action="store_true", help="창 표시 없이 콘솔 출력만")
@@ -62,7 +63,8 @@ def main():
 
     engine = VisionEngine(model_path=args.model, device="cpu", conf=args.conf, iou=args.iou)
 
-    window_name = f"YOLOv8 (CPU) cam{args.index} - q/ESC to quit"
+    # 실제 적용된 해상도 표시
+    window_name = f"YOLOv8 (CPU) cam{args.index} {cam.width}x{cam.height} - q/ESC to quit"
     if not args.no_show:
         cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE | cv2.WINDOW_GUI_NORMAL)
 
