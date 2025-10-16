@@ -8,28 +8,25 @@ import sys
 class VisionEngine:
     def __init__(self, model_path: str = "yolov8n.pt", device: str = "cpu", conf: float = 0.25, iou: float = 0.45):
         self.model = YOLO(model_path)
-        # CPU 테스트 모드 (추후 TensorRT 엔진으로 교체 예정)
-        self.model.to(device)
+        self.model.to(device)  # CPU 테스트 모드 (추후 TensorRT 교체)
         self.names = self.model.names
         self.conf = conf
         self.iou = iou
 
     def infer(self, frame):
-        # 단일 프레임 추론
         results = self.model(frame, conf=self.conf, iou=self.iou, verbose=False)[0]
         detections = []
         if results.boxes is None:
             return detections
-
         for box in results.boxes:
             cls_id = int(box.cls[0])
-            conf = float(box.conf[0])
+            score = float(box.conf[0])
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
             detections.append({
                 "class_id": cls_id,
                 "class_name": self.names.get(cls_id, str(cls_id)),
                 "bbox_xyxy": [x1, y1, x2, y2],
-                "score": conf
+                "score": score
             })
         return detections
 
