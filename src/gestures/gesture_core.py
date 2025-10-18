@@ -7,11 +7,25 @@ import time
 
 # Mediapipe 인덱스
 WRIST = 0
+THUMB_CMC = 1
+THUMB_MCP = 2
+THUMB_IP = 3
 THUMB_TIP = 4
 INDEX_MCP = 5
+INDEX_PIP = 6
+INDEX_DIP = 7
 INDEX_TIP = 8
 MIDDLE_MCP = 9
+MIDDLE_PIP = 10
+MIDDLE_DIP = 11
+MIDDLE_TIP = 12
+RING_MCP = 13
+RING_PIP = 14
+RING_DIP = 15
+RING_TIP = 16
 PINKY_MCP = 17
+PINKY_PIP = 18
+PINKY_DIP = 19
 PINKY_TIP = 20
 
 @dataclass
@@ -95,46 +109,110 @@ class HandTracker:
         return out
 
 class FeatureExtractor:
-    def compute(self, norm_pts: np.ndarray) -> Dict:
-        # 간단 특징들
-        pinch_dist = float(np.linalg.norm(norm_pts[THUMB_TIP] - norm_pts[INDEX_TIP]))
-        def extended(tip_idx: int, mcp_idx: int) -> bool:
-            tip_d = np.linalg.norm(norm_pts[tip_idx])
-            mcp_d = np.linalg.norm(norm_pts[mcp_idx]) + 1e-6
-            return tip_d / mcp_d > 1.25  # 임계값은 튜닝 포인트
+    def compute(self, norm_pts: np.ndarray, world_pts: Optional[np.ndarray] = None) -> Dict:
+        # 공통 유틸
+        def angle_cos(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+            # ∠ABC의 cos값
+            v1 = a - b
+            v2 = c - b
+            n1 = np.linalg.norm(v1) + 1e-8
+            n2 = np.linalg.norm(v2) + 1e-8
+            return float(np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0))
+
+        def is_extended_by_angle(mcp, pip, dip, tip, wrist, cos_thresh=-0.3, len_ratio=1.10) -> bool:
+            # PIP 각도가 곧게 펴질수록 cos≈-1. 충분히 곧고 길이도 충분하면 펴짐으로.
+            c = angle_cos(mcp, pip, tip)
+            tip_len = np.linalg.norm(tip - wrist)
+            mcp_len = np.linalg.norm(mcp - wrist) + 1e-8            
+            return (c <= cos_thresh) and (tip_len / mcp_len >= len_ratio)
+
+        wrist = norm_pts[WRIST, :2]
+        # tip 사이 거리
+        pinch_dist = float(np.linalg.norm(norm_pts[THUMB_TIP, :2] - norm_pts[INDEX_TIP, :2]))
+        pinch_world_m = None
+        if world_pts is not None and world_pts.shape[1] >= 3:
+            a = world_pts[THUMB_TIP, :3]
+            b = world_pts[INDEX_TIP, :3]
+            pinch_world_m = float(np.linalg.norm(a - b))
+
+        # 각 손가락 펴짐 판정
+        # 엄지는 CMC–MCP–IP–TIP을 써서 각도/길이 판정이 더 안정적
+        thumb_ext = is_extended_by_angle(
+            norm_pts[THUMB_CMC, :2], norm_pts[THUMB_MCP, :2], norm_pts[THUMB_IP, :2], norm_pts[THUMB_TIP, :2],
+            wrist, cos_thresh=-0.35, len_ratio=1.10
+        )
+        index_ext = is_extended_by_angle(
+            norm_pts[INDEX_MCP, :2], norm_pts[INDEX_PIP, :2], norm_pts[INDEX_DIP, :2], norm_pts[INDEX_TIP, :2],
+            wrist, cos_thresh=-0.3, len_ratio=1.10
+        )
+        middle_ext = is_extended_by_angle(
+            norm_pts[MIDDLE_MCP, :2], norm_pts[MIDDLE_PIP, :2], norm_pts[MIDDLE_DIP, :2], norm_pts[MIDDLE_TIP, :2],
+            wrist, cos_thresh=-0.3, len_ratio=1.10
+        )
+        ring_ext = is_extended_by_angle(
+            norm_pts[RING_MCP, :2], norm_pts[RING_PIP, :2], norm_pts[RING_DIP, :2], norm_pts[RING_TIP, :2],
+            wrist, cos_thresh=-0.3, len_ratio=1.08
+        )
+        pinky_ext = is_extended_by_angle(
+            norm_pts[PINKY_MCP, :2], norm_pts[PINKY_PIP, :2], norm_pts[PINKY_DIP, :2], norm_pts[PINKY_TIP, :2],
+            wrist, cos_thresh=-0.25, len_ratio=1.06
+        )
+        print(f"Debug: {thumb_ext}, {index_ext}, {middle_ext}, {ring_ext}, {pinky_ext}")
         fingers = {
-            "thumb": extended(THUMB_TIP, INDEX_MCP),  # 근사
-            "index": extended(INDEX_TIP, INDEX_MCP),
-            "middle": extended(12, MIDDLE_MCP),
-            "ring": extended(16, 13),
-            "pinky": extended(PINKY_TIP, PINKY_MCP),
+            "thumb": thumb_ext,
+            "index": index_ext,
+            "middle": middle_ext,
+            "ring": ring_ext,
+            "pinky": pinky_ext,
         }
         return {
             "pinch_dist": pinch_dist,
+            "pinch_world_m": pinch_world_m,
             "fingers": fingers,
         }
 
 class StaticGestureRecognizer:
     def __init__(self,
-                 pinch_thresh: float = 0.15,
-                 fist_max_extended: int = 1,
-                 open_min_extended: int = 4):
-        self.pinch_thresh = pinch_thresh
-        self.fist_max_extended = fist_max_extended
-        self.open_min_extended = open_min_extended
+                 pinch_norm_thresh: float = 0.15,
+                 pinch_world_thresh_m: float = 0.03,
+                 use_world: bool = True,
+                 # POINT는 엄지-검지 거리가 이 값보다 멀어야 성립
+                 point_min_pinch_norm: float = 0.20,
+                 point_min_pinch_world_m: float = 0.05):
+        self.pinch_norm_thresh = pinch_norm_thresh
+        self.pinch_world_thresh_m = pinch_world_thresh_m
+        self.use_world = use_world
+        self.point_min_pinch_norm = point_min_pinch_norm
+        self.point_min_pinch_world_m = point_min_pinch_world_m
 
     def classify(self, feats: Dict) -> str:
-        fingers = feats["fingers"]
-        extended_cnt = sum(fingers.values())
-        print(feats["pinch_dist"])
-        if feats["pinch_dist"] < self.pinch_thresh:
+        f = feats["fingers"]
+        pinch_world = feats.get("pinch_world_m")
+        pinch_dist = feats["pinch_dist"]
+
+        # 1) PINCH: 엄지+검지 펴짐 AND tip 거리 근접
+        near = (self.use_world and pinch_world is not None and pinch_world < self.pinch_world_thresh_m) or \
+               (pinch_world is None and pinch_dist < self.pinch_norm_thresh)
+        if f["thumb"] and f["index"] and near:
             return "PINCH"
-        if extended_cnt >= self.open_min_extended:
+
+        # 2) OPEN: 전부 펴짐
+        if all(f.values()):
             return "OPEN"
-        if extended_cnt <= self.fist_max_extended:
+
+        # 3) FIST: 전부 접힘
+        if not any(f.values()):
             return "FIST"
-        if fingers["index"] and not fingers["middle"]:
+
+        # 4) POINT:
+        # - 검지: 펴짐
+        # - 중지/약지/새끼: 접힘
+        # - 엄지-검지 거리가 충분히 멀다(엄지 펴짐 여부는 무시)
+        far = (self.use_world and pinch_world is not None and pinch_world > self.point_min_pinch_world_m) or \
+              (pinch_world is None and pinch_dist > self.point_min_pinch_norm)
+        if f["index"] and not any([f["middle"], f["ring"], f["pinky"]]) and far:
             return "POINT"
+
         return "UNKNOWN"
 
 class TemporalSmoother:
@@ -207,16 +285,23 @@ class GesturePipeline:
         self.smoother = TemporalSmoother()
         self.fsm = SequenceFSM()
 
-    def update(self, hands_xy: List[np.ndarray], labels: List[str], ts_ms: int):
+    def update(self,
+               hands_xy: List[np.ndarray],
+               labels: List[str],
+               ts_ms: int,
+               hands_world: Optional[List[np.ndarray]] = None):
         tracks = self.tracker.assign(hands_xy, labels, ts_ms)
         overlay_labels: List[str] = []
         events: List[Dict] = []
+        finger_states: List[Dict[str, bool]] = []
 
-        # 입력 순서에 맞춰 라벨 생성
-        for tr in tracks:
-            feats = self.extractor.compute(tr.last_norm_pts)
+         # 입력 순서에 맞춰 라벨 생성
+        for i, tr in enumerate(tracks):
+            world_pts = hands_world[i] if hands_world is not None and i < len(hands_world) else None
+            feats = self.extractor.compute(tr.last_norm_pts, world_pts)
             raw_label = self.static_recog.classify(feats)
             stable = self.smoother.update(tr.id, raw_label)
+            finger_states.append(feats["fingers"])
             if stable is None:
                 show = f"{tr.handedness}"
             else:
@@ -224,4 +309,4 @@ class GesturePipeline:
             overlay_labels.append(show)
             events.extend(self.fsm.update(tr, stable, ts_ms))
 
-        return {"overlay_labels": overlay_labels, "events": events}
+        return {"overlay_labels": overlay_labels, "events": events, "fingers": finger_states}
