@@ -173,6 +173,7 @@ def run(source: Union[str, int],
         result = landmarker.detect_for_video(mp_image, ts_ms)
 
         hands_xy: List[np.ndarray] = []
+        hands_world: List[np.ndarray] = []
         labels: List[str] = []
         if result and result.hand_landmarks:
             for i, lm_list in enumerate(result.hand_landmarks):
@@ -183,10 +184,16 @@ def run(source: Union[str, int],
                 else:
                     labels.append("Hand")
 
+        # world_landmarks가 있으면 3D(m) 좌표 수집
+        if result and getattr(result, "hand_world_landmarks", None):
+            for i, lm_list in enumerate(result.hand_world_landmarks):
+                wpts = np.array([[lm.x, lm.y, lm.z] for lm in lm_list], dtype=np.float32)
+                hands_world.append(wpts)                
+
         annotated = frame.copy()
 
-        # 추가: 제스처 파이프라인 업데이트
-        pipe_out = pipeline.update(hands_xy, labels, ts_ms)
+        # 추가: 제스처 파이프라인 업데이트 (world 좌표 전달)
+        pipe_out = pipeline.update(hands_xy, labels, ts_ms, hands_world=hands_world if hands_world else None)
         overlay_labels = pipe_out["overlay_labels"] if hands_xy else labels
         events = pipe_out["events"] if hands_xy else []
 
