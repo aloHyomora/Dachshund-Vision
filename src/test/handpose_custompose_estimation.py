@@ -13,7 +13,7 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 # 추가: 제스처 파이프라인
-from gestures.gesture_core import GesturePipeline
+from gestures.hand_gesture_core import GesturePipeline
 
 # 모델 경로
 DEFAULT_MODEL_PATH = "models/hand_landmarker.task"
