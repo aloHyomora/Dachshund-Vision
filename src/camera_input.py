@@ -51,32 +51,26 @@ class CameraInput:
             return (aw == int(w) and ah == int(h)), aw, ah
 
         if self.width and self.height:
-            ok, aw, ah = _apply(self.width, self.height)
+            req_w, req_h = int(self.width), int(self.height)
+            ok, aw, ah = _apply(req_w, req_h)
             if not ok:
-                # 적용 실패 시 드라이버 기본값
-                aw = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                ah = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        else:
-            ok = False
-            aw = ah = 0
-            # v4l2-ctl 목록 우선 시도(대해상도부터)
-            for w, h in _list_resolutions_v4l2(self.index):
-                ok, aw, ah = _apply(w, h)
-                if ok:
-                    break
-            # 목록 실패 시 흔한 해상도 프로빙
+                # 1) v4l2가 보고한 지원 해상도 중 요청치 이하에서 최댓값 선택
+                for w, h in _list_resolutions_v4l2(self.index):
+                    if w <= req_w and h <= req_h:
+                        ok, aw, ah = _apply(w, h)
+                        if ok:
+                            break
             if not ok:
+                # 2) 흔한 해상도 후보들 중 요청치 이하에서 시도(상대적으로 작은 쪽부터)
                 for w, h in [
-                    (7680, 4320), (5120, 2880), (4096, 2160), (3840, 2160),
-                    (2560, 1440), (2048, 1536), (1920, 1200), (1920, 1080),
-                    (1600, 1200), (1600, 900), (1440, 900),
-                    (1366, 768), (1280, 1024), (1280, 800), (1280, 720),
-                    (1024, 768), (800, 600), (640, 480)
+                    (1280, 720), (1024, 768), (960, 540), (800, 600), (640, 480)
                 ]:
-                    ok, aw, ah = _apply(w, h)
-                    if ok:
-                        break
+                    if w <= req_w and h <= req_h:
+                        ok, aw, ah = _apply(w, h)
+                        if ok:
+                            break
             if not ok:
+                # 3) 마지막 수단: 드라이버 기본값 유지
                 aw = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 ah = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
