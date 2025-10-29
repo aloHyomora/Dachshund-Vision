@@ -4,6 +4,7 @@ from camera_input import CameraInput
 import cv2
 import argparse
 import sys
+import time
 
 class VisionEngine:
     def __init__(self, model_path: str = "yolov8n.pt", device: str = "cpu", conf: float = 0.25, iou: float = 0.45):
@@ -67,7 +68,19 @@ def main():
 
     try:
         while True:
-            frame = cam.read_frame()
+            # 프레임 읽기 실패 시 재오픈으로 복구하고 다음 루프로 넘어감
+            try:
+                frame = cam.read_frame()
+            except Exception as e:
+                print(f"[Warn] read_frame failed: {e} -> reopening camera")
+                try:
+                    cam.release()
+                    cam.open()
+                except Exception as e2:
+                    print(f"[Error] reopen failed: {e2}")
+                    break
+                time.sleep(0.05)
+                continue
             detections = engine.infer(frame)
 
             # 콘솔 로그: 클래스, 좌표, 확률
